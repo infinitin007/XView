@@ -17,3 +17,19 @@
     "default_icon": {
       "48": "icons/icon.png"
     }
+    },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "icons": {
+    "48": "icons/icon.png"
+  }
+}
+
