@@ -113,3 +113,118 @@ function loadFriendCards() {
     });
   });
 }
+
+function loadAddedByCards() {
+  const container = document.getElementById("addedByList");
+  container.innerHTML = '';
+  
+  chrome.storage.local.get(["loggedInUser"], ({ loggedInUser }) => {
+    if (!loggedInUser || !loggedInUser.email) return;
+    
+    const myCookies = loggedInUser.cookies;
+
+
+    // Get full user info from DB to get fresh addedBy list
+    fetch(`http://localhost:3000/user/${encodeURIComponent(loggedInUser.email)}`)
+      .then(res => res.json())
+      .then(updatedUser => {
+        if (!updatedUser || !Array.isArray(updatedUser.addedBy)) return;
+
+        // Store latest version
+        chrome.storage.local.set({ loggedInUser: updatedUser });
+
+        // For each user in 'addedBy', get their cookies
+        updatedUser.addedBy.forEach(userEmail => {
+          // Fetch each addedBy user to get their cookies
+          fetch(`http://localhost:3000/user/${encodeURIComponent(userEmail)}`)
+            .then(res => res.json())
+            .then(friendUser => {
+              const card = document.createElement("div");
+              card.className = "card";
+
+              const email = document.createElement("div");
+              email.textContent = userEmail;
+
+              const btn = document.createElement("button");
+              btn.className = "btn view-btn";
+
+              if (friendUser && friendUser.cookies) {
+                btn.textContent = "Show Feed";
+                btn.onclick = () => {
+                  loadFriendSession(friendUser.email, friendUser.cookies);
+                };
+              } else {
+                btn.textContent = "No Cookies";
+                btn.disabled = true;
+              }
+
+              card.appendChild(email);
+              card.appendChild(btn);
+              container.appendChild(card);
+            });
+        });
+
+        // Show "Restore My Feed" button if session was switched
+        if (typeof myCookies === "string" && myCookies.trim().length > 0) {
+          const restoreBtn = document.createElement("button");
+          restoreBtn.textContent = "Restore My Feed";
+          restoreBtn.className = "btn remove-btn";
+          restoreBtn.onclick = restoreMyCookies;
+
+          container.appendChild(document.createElement("hr"));
+          container.appendChild(restoreBtn);
+        }
+      });
+  });
+}
+
+function setupPublicToggle() {
+  const toggle = document.getElementById("publicSwitch");
+
+  chrome.storage.local.get(["loggedInUser"], ({ loggedInUser }) => {
+    if (!loggedInUser) return;
+
+    // Set initial toggle state
+    toggle.checked = loggedInUser.public === true;
+
+    toggle.onchange = () => {
+      const makePublic = toggle.checked;
+
+      fetch("http://localhost:3000/toggle-public", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userEmail: loggedInUser.email,
+          makePublic
+        })
+      })
+        .then(res => res.json())
+        .then(() => {
+          // Refetch updated user object
+          return fetch(`http://localhost:3000/user/${encodeURIComponent(loggedInUser.email)}`);
+        })
+        .then(res => res.json())
+        .then(updatedUser => {
+          chrome.storage.local.set({ loggedInUser: updatedUser }, () => {
+            loadGlobalUsers();
+            loadFriendCards();
+            loadAddedByCards();
+            alert(`Your feed is now ${makePublic ? "public" : "friends-only"}.`);
+          });
+        })
+        .catch(err => {
+          console.error("Failed to toggle public mode:", err);
+          alert("Something went wrong while toggling public mode.");
+        });
+    };
+  });
+}
+
+
+function loadFriendSession(friendName, friendCookieString) {
+  chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+    const tab = tabs[0];
+
+    if (!tab.url.startsWith("https://x.com")) {
+      if (!confirm("You are not on x.com. Continue to load friend’s session?")) return;
+    }
