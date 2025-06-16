@@ -228,3 +228,119 @@ function loadFriendSession(friendName, friendCookieString) {
     if (!tab.url.startsWith("https://x.com")) {
       if (!confirm("You are not on x.com. Continue to load friend’s session?")) return;
     }
+
+    // Remove current user's cookies
+    removeAllXComCookies(() => {
+      // Convert cookie string into an array of cookie objects
+      const cookiePairs = friendCookieString.split(";").map(s => s.trim()).filter(Boolean);
+      const cookiesArray = cookiePairs.map(pair => {
+        const [name, value] = pair.split("=");
+        return {
+          name: name.trim(),
+          value: value.trim(),
+          domain: ".x.com",
+          path: "/",
+          secure: true,
+          httpOnly: false
+        };
+      });
+
+      // Set each cookie in browser
+      cookiesArray.forEach(c => {
+        chrome.cookies.set({
+          url: "https://x.com",
+          name: c.name,
+          value: c.value,
+          domain: c.domain,
+          path: c.path,
+          secure: c.secure,
+          httpOnly: c.httpOnly
+        });
+      });
+
+      // Wait and reload to X homepage
+      setTimeout(() => {
+        chrome.tabs.update(tab.id, { url: "https://x.com/home" });
+
+        chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
+          if (tabId === tab.id && info.status === "complete") {
+            chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ["twikit.js"]
+            });
+            chrome.tabs.onUpdated.removeListener(listener);
+          }
+        });
+      }, 500);
+    });
+  });
+}
+
+function restoreMyCookies() {
+  chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+    const tab = tabs[0];
+    if (!tab.url.startsWith("https://x.com")) {
+      if (!confirm("You are not on x.com. Restore your session anyway?")) return;
+    }
+
+    chrome.storage.local.get(["loggedInUser"], ({ loggedInUser }) => {
+      const cookieString = loggedInUser?.cookies;
+      if (!cookieString || typeof cookieString !== "string" || cookieString.trim().length === 0) {
+        return alert("No saved original cookies found.");
+      }
+
+      // Remove all current x.com cookies
+      removeAllXComCookies(() => {
+        const pairs = cookieString.split(";").map(p => p.trim()).filter(Boolean);
+
+        pairs.forEach(pair => {
+          const idx = pair.indexOf("=");
+          if (idx > -1) {
+            const name = pair.slice(0, idx).trim();
+            const value = pair.slice(idx + 1).trim();
+            if (name && value) {
+              chrome.cookies.set({
+                url: "https://x.com",
+                name,
+                value,
+                domain: ".x.com",
+                path: "/",
+                secure: true,
+                httpOnly: false
+              });
+            }
+          }
+        });
+
+        setTimeout(() => {
+          chrome.tabs.update(tab.id, { url: "https://x.com/home" });
+          alert("Restored your session.");
+        }, 500);
+      });
+    });
+  });
+}
+
+function removeAllXComCookies(callback) {
+  chrome.cookies.getAll({ domain: "x.com" }, cookies => {
+    if (!cookies || cookies.length === 0) {
+      callback();
+      return;
+    }
+    let count = 0;
+    cookies.forEach(c => {
+      const domainNoDot = c.domain.startsWith(".") ? c.domain.slice(1) : c.domain;
+      const url = `https://${domainNoDot}${c.path}`;
+      chrome.cookies.remove({ url: url, name: c.name }, () => {
+        count++;
+        if (count >= cookies.length) {
+          callback();
+        }
+      });
+    });
+    // fallback if removal events don’t fire
+    setTimeout(() => {
+      callback();
+    }, 1500);
+  });
+}
